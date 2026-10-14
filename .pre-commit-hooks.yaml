@@ -1,0 +1,6 @@
+- id: nbripout
+  name: nbripout
+  description: "Strip output from Jupyter and Zeppelin notebooks (drop-in replacement for nbstripout)"
+  entry: nbripout
+  language: rust
+  files: \.(ipynb|zpln)$

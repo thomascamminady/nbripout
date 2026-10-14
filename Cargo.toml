@@ -1,0 +1,27 @@
+[package]
+name = "nbripout"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "A safer, faster, drop-in replacement for nbstripout: strip output from Jupyter notebooks"
+readme = "README.md"
+repository = "https://github.com/thomascamminady/nbripout"
+keywords = ["jupyter", "notebook", "git", "nbstripout", "ipynb"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+anyhow = "1.0.86"
+clap = { version = "4.5.20", features = ["derive"] }
+indexmap = "2.5"
+memchr = "2.7"
+rayon = "1.10"
+tempfile = "3.12"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "0.38", features = ["fs"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
