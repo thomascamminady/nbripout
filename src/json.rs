@@ -542,15 +542,68 @@ pub fn json_float(x: f64) -> String {
     }
 }
 
+/// Split Rust's scientific formatting into significant digits and exponent.
+fn sci_parts(sci: &str) -> (Vec<u8>, i32) {
+    let (mantissa, exponent) = sci.split_once('e').expect("scientific notation");
+    let digits = mantissa.bytes().filter(|&b| b != b'.').collect();
+    (digits, exponent.parse().expect("integer exponent"))
+}
+
+/// The shortest digits that round-trip to `x` (positive, finite) and the decimal
+/// exponent of the first digit, chosen exactly like CPython's dtoa.
+///
+/// Rust's `{:e}` finds the same shortest digits, except when `x` lies exactly
+/// halfway between two equally short candidates: Rust rounds up, CPython rounds
+/// half to even (`726104781533262.25` is `...262.2` in Python). Such ties need 16
+/// or more significant digits, so the exact expansion is only checked then.
+fn shortest_digits(x: f64) -> (String, i32) {
+    let (digits, exponent) = sci_parts(&format!("{x:e}"));
+    let n = digits.len();
+    let as_string = |d: Vec<u8>| String::from_utf8(d).expect("ASCII digits");
+    if n < 16 {
+        return (as_string(digits), exponent);
+    }
+    // 767 significant digits suffice for the exact expansion of any f64.
+    let (exact, exact_exponent) = sci_parts(&format!("{x:.800e}"));
+    let is_tie =
+        exact_exponent == exponent && exact[n] == b'5' && exact[n + 1..].iter().all(|&b| b == b'0');
+    if !is_tie {
+        return (as_string(digits), exponent);
+    }
+    let below = exact[..n].to_vec();
+    let mut above = below.clone();
+    for digit in above.iter_mut().rev() {
+        if *digit == b'9' {
+            *digit = b'0';
+        } else {
+            *digit += 1;
+            break;
+        }
+    }
+    let round_trips = |d: &[u8]| {
+        let text = format!("{}e{}", as_string(d.to_vec()), exponent - (n as i32 - 1));
+        text.parse::<f64>() == Ok(x)
+    };
+    let mut candidates = [below, above];
+    // Even last digit first; at a binade boundary only one side may round-trip.
+    candidates.sort_by_key(|d| d[n - 1] % 2);
+    match candidates
+        .into_iter()
+        .find(|d| d[0] != b'0' && round_trips(d))
+    {
+        Some(chosen) => {
+            let trimmed = chosen.len() - chosen.iter().rev().take_while(|&&b| b == b'0').count();
+            (as_string(chosen[..trimmed.max(1)].to_vec()), exponent)
+        }
+        None => (as_string(digits), exponent),
+    }
+}
+
 /// Python's `repr(float)` for finite values: the shortest round-tripping digits,
 /// in positional notation for 1e-4 <= |x| < 1e16 and scientific notation otherwise.
 pub fn py_float_repr(x: f64) -> String {
     debug_assert!(x.is_finite());
-    // Rust's `{:e}` yields the same shortest round-trip digits as CPython's dtoa.
-    let sci = format!("{:e}", x.abs());
-    let (mantissa, exponent) = sci.split_once('e').expect("`{:e}` always has an exponent");
-    let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
-    let exponent: i32 = exponent.parse().expect("integer exponent");
+    let (digits, exponent) = shortest_digits(x.abs());
     // Position of the decimal point relative to the start of `digits`.
     let decpt = exponent + 1;
     let n = digits.len() as i32;
@@ -612,6 +665,9 @@ mod tests {
             (-1.25e-7, "-1.25e-07"),
             (1.7976931348623157e308, "1.7976931348623157e+308"),
             (12345678901234567.0, "1.2345678901234568e+16"),
+            // Exact ties between two shortest candidates round half to even.
+            (726104781533262.25, "726104781533262.2"),
+            (726104781533262.75, "726104781533262.8"),
         ];
         for (x, expected) in cases {
             assert_eq!(py_float_repr(x), expected, "repr({x:e})");

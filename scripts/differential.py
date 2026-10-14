@@ -99,8 +99,12 @@ def random_float(rng: random.Random) -> float:
             (value,) = struct.unpack("<d", rng.randbytes(8))
             if math.isfinite(value):
                 return value
-    if choice < 0.8:
+    if choice < 0.7:
         return rng.choice([0.0, -0.0, 1e-5, 1e16, 1e15, 0.1, 100.0, 1e22, 5e-324, 2.5e-7])
+    if choice < 0.8:
+        # Exactly halfway between two shortest representations: Python rounds
+        # these half to even, Rust's formatter would round up.
+        return float(rng.randrange(2**49, 2**52)) + rng.choice([0.25, 0.75])
     return rng.uniform(-1e6, 1e6)
 
 
