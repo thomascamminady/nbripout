@@ -145,3 +145,10 @@ Layout: `json.rs` (Python-compatible JSON), `py.rs` (Python string semantics),
 `notebook.rs` (nbformat read/write normalization), `strip.rs` (stripping rules),
 `fsutil.rs` (atomic writes), `git.rs` (install/status/config),
 `filter_process.rs` (git's pkt-line filter protocol), `main.rs` (CLI).
+
+## License
+
+MIT, see [LICENSE](LICENSE). nbripout reimplements the behavior of
+[nbstripout](https://github.com/kynan/nbstripout) (MIT, © 2015 Min RK, Florian
+Rathgeber, Michael McNeil Forbes, 2019 Casper da Costa-Luis), whose CLI and
+documentation it follows closely.

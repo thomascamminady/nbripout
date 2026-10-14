@@ -6,6 +6,7 @@ rust-version = "1.81"
 description = "A safer, faster, drop-in replacement for nbstripout: strip output from Jupyter notebooks"
 readme = "README.md"
 repository = "https://github.com/thomascamminady/nbripout"
+license = "MIT"
 keywords = ["jupyter", "notebook", "git", "nbstripout", "ipynb"]
 categories = ["command-line-utilities", "development-tools"]
 
