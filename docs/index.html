@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nbripout: keep notebook outputs out of git</title>
+<meta name="description" content="nbripout strips outputs from Jupyter notebooks as you commit. A drop-in replacement for nbstripout with byte-identical results, safe writes and 10 to 90 times the speed.">
+<meta property="og:title" content="nbripout">
+<meta property="og:description" content="Keep notebook outputs out of git. A safer, faster, drop-in replacement for nbstripout.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://thomascamminady.github.io/nbripout/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%233347A8'/%3E%3Cpath d='M11 8H8v16h3M21 8h3v16h-3' fill='none' stroke='%23fff' stroke-width='2.5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Schibsted+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #EEF2E8;
+  --grid: rgba(52, 82, 52, 0.075);
+  --cell: #FBFCF8;
+  --cell-edge: #D3DCCB;
+  --figure: #FFFFFF;
+  --ink: #1D2A22;
+  --ink-2: #44544A;
+  --ink-3: #5B6B60;
+  --in: #3347A8;
+  --out: #B23C1B;
+  --bar-new: #3347A8;
+  --bar-old: #7D897F;
+  --kw: #1E7A35;
+  --str: #A8321F;
+  --rule: #CBD5C2;
+  --mono: "Fragment Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #141B16;
+    --grid: rgba(196, 226, 196, 0.05);
+    --cell: #1B241D;
+    --cell-edge: #2E3C31;
+    --figure: #E6EBE2;
+    --ink: #E2EADD;
+    --ink-2: #B9C6BC;
+    --ink-3: #97A69A;
+    --in: #9DAAF6;
+    --out: #FF9470;
+    --bar-new: #7485E6;
+    --bar-old: #5E6B61;
+    --kw: #86D99B;
+    --str: #FFA48F;
+    --rule: #2E3C31;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1.125rem/1.6 var(--sans);
+  font-feature-settings: "kern", "liga";
+}
+a { color: var(--in); text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--in); outline-offset: 3px; border-radius: 3px; }
+code, pre { font-family: var(--mono); font-size: 0.86em; font-variant-ligatures: none; }
+p code, li code, td code, dd code { white-space: nowrap; }
+pre { margin: 0; }
+
+.wrap { width: min(1120px, 100% - 2rem); margin-inline: auto; }
+
+/* Top bar */
+.top { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-block: 1.25rem; }
+.wordmark { font-weight: 800; font-size: 1.3rem; letter-spacing: -0.02em; color: var(--ink); text-decoration: none; }
+.top nav { display: flex; gap: 1.5rem; font-weight: 500; }
+.top nav a { color: var(--ink-2); text-decoration: none; }
+.top nav a:hover { color: var(--ink); text-decoration: underline; }
+
+/* Hero: engineering paper behind the cell */
+.hero-band { position: relative; isolation: isolate; }
+.hero-band::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+  -webkit-mask-image: linear-gradient(#000 65%, transparent);
+          mask-image: linear-gradient(#000 65%, transparent);
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: start;
+  padding-block: clamp(2.5rem, 7vw, 5.5rem) clamp(3rem, 8vw, 6rem);
+}
+h1 {
+  margin: 0 0 1.5rem;
+  font-weight: 800;
+  font-size: clamp(2.6rem, 5.4vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.lede { margin: 0 0 2rem; max-width: 34em; color: var(--ink-2); font-size: 1.2rem; }
+
+.install { position: relative; background: var(--cell); border: 1px solid var(--cell-edge); border-radius: 6px; padding: 1rem 5.5rem 1rem 1.1rem; }
+.install pre { overflow-x: auto; line-height: 1.75; }
+.install .sigil { color: var(--ink-3); user-select: none; }
+.install .cont { display: inline-block; padding-left: 2.5em; }
+.copy {
+  position: absolute; top: 0.7rem; right: 0.7rem;
+  font: 500 0.875rem/1 var(--sans); color: var(--ink);
+  background: var(--paper); border: 1px solid var(--cell-edge); border-radius: 4px;
+  padding: 0.5rem 0.7rem; cursor: pointer;
+}
+.copy:hover { border-color: var(--ink-3); }
+.install-note { margin: 0.75rem 0 0; font-size: 0.95rem; color: var(--ink-3); }
+
+/* The notebook cell */
+.nb { margin: 0; }
+.cell { --tear-h: 9px; font-size: 0.95rem; filter: drop-shadow(0 1px 0 var(--cell-edge)) drop-shadow(0 0 0.5px var(--cell-edge)); }
+.cell-in, .cell-out { display: grid; grid-template-columns: 5.6rem minmax(0, 1fr); background: var(--cell); }
+.cell-in { border-radius: 6px 6px 0 0; padding: 1rem 1.1rem calc(0.9rem + var(--tear-h)) 0.5rem; clip-path: var(--tear-in); }
+.cell-out { border-radius: 0 0 6px 6px; padding: calc(0.4rem + var(--tear-h)) 1.1rem 1.1rem 0.5rem; margin-top: calc(-1 * var(--tear-h)); clip-path: var(--tear-out); }
+.prompt { font-family: var(--mono); font-size: 0.86em; text-align: right; padding-right: 0.9rem; white-space: pre; line-height: 1.7; }
+.prompt.in { color: var(--in); }
+.prompt.out { color: var(--out); }
+.src { overflow-x: auto; line-height: 1.7; }
+.kw { color: var(--kw); font-weight: 700; }
+.st { color: var(--str); }
+.result pre { color: var(--ink); line-height: 1.7; margin-bottom: 0.6rem; }
+.plot { display: block; width: 100%; max-width: 380px; height: auto; background: var(--figure); border-radius: 2px; }
+.out-wrap.closing { overflow: hidden; }
+
+.nb figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-top: 1.1rem; padding-left: 0.5rem; color: var(--ink-3); font-size: 0.95rem; }
+.toggle {
+  flex: none; font: 500 0.95rem/1 var(--sans); color: var(--in);
+  background: none; border: 1px solid currentColor; border-radius: 4px; padding: 0.55rem 0.8rem; cursor: pointer;
+}
+.toggle:hover { background: color-mix(in srgb, var(--in) 8%, transparent); }
+
+/* Ripping: the output falls away along the tear, then the cell closes up. */
+.cell.ripping .cell-out { transform: translate(14px, 70px) rotate(3.2deg); opacity: 0; }
+.cell.collapsed .cell-out { visibility: hidden; }
+.cell.clean .cell-in { clip-path: none; border-radius: 6px; padding-bottom: 1rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .cell-out { transition: transform 700ms cubic-bezier(.55, 0, .8, .2), opacity 600ms ease-in 100ms; transform-origin: 20% 0; }
+  .out-wrap { transition: height 450ms cubic-bezier(.3, 0, .2, 1); }
+  .cell-in { transition: padding-bottom 450ms cubic-bezier(.3, 0, .2, 1); }
+  .cell.restoring .cell-out { transition: opacity 400ms ease-out 150ms, transform 400ms ease-out 150ms; }
+}
+
+/* Sections */
+main section.block { padding-block: clamp(3rem, 7vw, 5rem); border-top: 1px solid var(--rule); }
+h2 { margin: 0 0 1.25rem; font-weight: 700; font-size: clamp(1.7rem, 3vw, 2.25rem); line-height: 1.15; letter-spacing: -0.02em; max-width: 24ch; text-wrap: balance; }
+h3 { margin: 0 0 0.5rem; font-weight: 700; font-size: 1.05rem; }
+.prose { max-width: 38em; }
+.prose p { margin: 0 0 1rem; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: start; }
+
+.term { background: var(--cell); border: 1px solid var(--cell-edge); border-radius: 6px; overflow: hidden; }
+.term h3 { margin: 0; padding: 0.7rem 1rem; border-bottom: 1px solid var(--cell-edge); font-size: 0.95rem; font-weight: 500; color: var(--ink-2); }
+.term pre { padding: 1rem; overflow-x: auto; line-height: 1.7; color: var(--ink); }
+.term .sigil, .term .dim { color: var(--ink-3); }
+.term .bad { color: var(--out); }
+.term .good { color: var(--in); }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; margin-block: 2rem; }
+
+.facts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem 3rem; max-width: 60rem; }
+.facts li { padding-left: 1.1rem; border-left: 2px solid var(--in); color: var(--ink-2); }
+
+/* Benchmark chart */
+.legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.75rem; margin: 2rem 0 1.25rem; color: var(--ink-2); font-size: 0.95rem; }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 10px; border-radius: 0 2px 2px 0; margin-right: 0.5rem; vertical-align: 0.05em; background: var(--sw); }
+.bench { display: grid; gap: 1.6rem; margin: 0; }
+.bench-row { display: grid; grid-template-columns: 16rem minmax(0, 1fr) 4.5rem; gap: 1.5rem; align-items: center; }
+.bench-label { font-weight: 500; line-height: 1.35; }
+.bench-label small { display: block; font-weight: 400; color: var(--ink-3); font-size: 0.9rem; margin-top: 0.2rem; }
+.bars { display: grid; gap: 2px; }
+.bar { display: flex; align-items: center; gap: 0.6rem; height: 26px; font-size: 0.9rem; color: var(--ink-2); font-variant-numeric: tabular-nums; outline-offset: 1px; }
+.bar i { display: block; height: 14px; width: calc(var(--w) * (100% - 5.5rem) / 100); min-width: 3px; border-radius: 0 4px 4px 0; background: var(--c); transition: filter 120ms; }
+.bar.old { --c: var(--bar-old); }
+.bar.new { --c: var(--bar-new); }
+.bar:hover i, .bar:focus-visible i { filter: brightness(1.15) saturate(1.1); }
+.speed { font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; text-align: right; }
+.chart-note { margin: 1.5rem 0 0; color: var(--ink-3); font-size: 0.95rem; max-width: 46em; }
+.tip { position: fixed; z-index: 5; pointer-events: none; background: var(--ink); color: var(--paper); padding: 0.45rem 0.65rem; border-radius: 4px; font-size: 0.875rem; line-height: 1.35; opacity: 0; transform: translate(-50%, calc(-100% - 10px)); }
+.tip strong { display: block; font-size: 1rem; }
+.tip.show { opacity: 1; }
+details { margin-top: 1.25rem; }
+summary { cursor: pointer; color: var(--in); font-weight: 500; width: fit-content; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.98rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.75rem 1.25rem 0.75rem 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 700; color: var(--ink); }
+td { color: var(--ink-2); }
+td:first-child { color: var(--ink); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+
+dl.cmds { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.9rem 2.5rem; margin: 2rem 0 0; }
+dl.cmds dt code { font-size: 0.92rem; color: var(--ink); }
+dl.cmds dd { margin: 0; color: var(--ink-2); }
+
+footer { border-top: 1px solid var(--rule); padding-block: 2.5rem 3.5rem; color: var(--ink-3); font-size: 0.95rem; }
+footer p { margin: 0 0 0.5rem; max-width: 52em; }
+
+@media (max-width: 900px) {
+  .hero, .split { grid-template-columns: minmax(0, 1fr); }
+  .bench-row { grid-template-columns: minmax(0, 1fr) 3.75rem; gap: 0.6rem 1rem; }
+  .bench-label { grid-column: 1 / -1; }
+  .speed { font-size: 1.4rem; }
+}
+@media (max-width: 640px) {
+  body { font-size: 1.0625rem; }
+  .pair, .facts { grid-template-columns: minmax(0, 1fr); }
+  .cell { font-size: 0.85rem; }
+  .cell-in, .cell-out { grid-template-columns: 4.4rem minmax(0, 1fr); }
+  dl.cmds { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; }
+  .install pre { white-space: pre-wrap; }
+  .install { padding-right: 1.1rem; padding-top: 3.2rem; }
+  table.diffs thead { display: none; }
+  table.diffs tr { display: block; padding-block: 0.9rem; border-bottom: 1px solid var(--rule); }
+  table.diffs td { display: block; border: 0; padding: 0.15rem 0; }
+  table.diffs td:first-child { font-weight: 500; margin-bottom: 0.25rem; }
+  table.diffs td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-3); }
+  dl.cmds dd { margin-bottom: 1rem; }
+  .top nav { gap: 1rem; }
+}
+</style>
+</head>
+<body>
+<div class="hero-band">
+  <header class="top wrap">
+    <a class="wordmark" href="./">nbripout</a>
+    <nav aria-label="Main">
+      <a href="#install">Install</a>
+      <a href="https://github.com/thomascamminady/nbripout">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero wrap">
+    <div>
+      <h1>Keep notebook outputs out of git.</h1>
+      <p class="lede">nbripout strips outputs, execution counts and noisy metadata from Jupyter notebooks as you commit. It is a drop-in replacement for nbstripout: same options, same git setup, byte-for-byte the same files. It never leaves a notebook half-written, and it is 10 to 90 times faster.</p>
+      <div class="install" id="install">
+        <pre><code><span class="sigil">$ </span>cargo install --git \
+<span class="cont">https://github.com/<wbr>thomascamminady/nbripout</span>
+<span class="sigil">$ </span>nbripout --install</code></pre>
+        <button class="copy" type="button" data-copy="cargo install --git https://github.com/thomascamminady/nbripout&#10;nbripout --install">Copy</button>
+      </div>
+      <p class="install-note">Needs Rust 1.81 or newer. Run <code>nbripout --install</code> in each repository, or <code>nbripout --install --global</code> once.</p>
+    </div>
+
+    <figure class="nb" aria-label="A Jupyter code cell with a bar chart as output. nbripout removes the output and the execution count.">
+      <div class="cell" id="cell">
+        <div class="cell-in">
+          <span class="prompt in">In [<span id="count">12</span>]:</span>
+          <pre class="src"><code><span class="kw">import</span> pandas <span class="kw">as</span> pd
+rides = pd.read_csv(<span class="st">"rides.csv"</span>)
+rides.groupby(<span class="st">"month"</span>).km.sum().plot.bar()</code></pre>
+        </div>
+        <div class="out-wrap">
+          <div class="cell-out">
+            <span class="prompt out">Out[12]:</span>
+            <div class="result">
+              <pre>&lt;Axes: xlabel='month'&gt;</pre>
+              <svg class="plot" viewBox="0 0 380 230" role="img" aria-label="Bar chart of kilometres ridden per month, January to June">
+                <g font-family="DejaVu Sans, Verdana, sans-serif" font-size="10" fill="#262626">
+                  <path d="M52 16V176H368" fill="none" stroke="#262626" stroke-width="0.8"/>
+                  <g stroke="#262626" stroke-width="0.8">
+                    <path d="M48 176H52M48 136H52M48 96H52M48 56H52M48 16H52"/>
+                  </g>
+                  <g text-anchor="end">
+                    <text x="45" y="179">0</text><text x="45" y="139">200</text><text x="45" y="99">400</text><text x="45" y="59">600</text><text x="45" y="19">800</text>
+                  </g>
+                  <g fill="#1F77B4">
+                    <rect x="62" y="93.6" width="35" height="82.4"/>
+                    <rect x="114" y="100" width="35" height="76"/>
+                    <rect x="166" y="85" width="35" height="91"/>
+                    <rect x="218" y="54" width="35" height="122"/>
+                    <rect x="270" y="29.2" width="35" height="146.8"/>
+                    <rect x="322" y="15.6" width="35" height="160.4"/>
+                  </g>
+                  <g text-anchor="end">
+                    <text transform="translate(83 182) rotate(-90)">1</text>
+                    <text transform="translate(135 182) rotate(-90)">2</text>
+                    <text transform="translate(187 182) rotate(-90)">3</text>
+                    <text transform="translate(239 182) rotate(-90)">4</text>
+                    <text transform="translate(291 182) rotate(-90)">5</text>
+                    <text transform="translate(343 182) rotate(-90)">6</text>
+                  </g>
+                  <text x="210" y="214" text-anchor="middle">month</text>
+                </g>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figcaption>
+        <span id="cell-status" aria-live="polite">What you see in Jupyter.</span>
+        <button class="toggle" id="toggle" type="button">Strip outputs</button>
+      </figcaption>
+    </figure>
+  </div>
+</div>
+
+<main>
+  <section class="block wrap" id="drop-in">
+    <div class="split">
+      <div class="prose">
+        <h2>Switching takes one command</h2>
+        <p>Run <code>nbripout --install</code> wherever nbstripout is set up today. nbripout registers under nbstripout's filter name, so committed <code>.gitattributes</code>, <code>filter.nbstripout.extrakeys</code> settings and teammates who stay on nbstripout keep working, and both tools write identical files.</p>
+        <p>That is tested, not assumed. A differential test runs nbstripout 0.9.1 next to nbripout on 3,000 generated and 208 real-world notebooks with 15 combinations of options and compares every byte, the list of files that would change, and the files left on disk. It finds no differences.</p>
+      </div>
+      <div class="term">
+        <h3>.gitattributes stays as it is</h3>
+        <pre><code>*.ipynb filter=nbstripout
+*.zpln filter=nbstripout
+*.ipynb diff=ipynb</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="safer">
+    <div class="prose">
+      <h2>Your notebook survives a failed write</h2>
+      <p>nbstripout empties a notebook before it writes the stripped version. If anything fails in between, the notebook is gone. A code cell without an <code>outputs</code> key, as some generators and hand edits produce, is enough:</p>
+    </div>
+    <div class="pair">
+      <div class="term">
+        <h3>nbstripout 0.9.1</h3>
+        <pre><code><span class="sigil">$ </span>nbstripout analysis.ipynb
+<span class="dim">Traceback (most recent call last):
+  ...</span>
+AttributeError: outputs
+<span class="sigil">$ </span>wc -c &lt; analysis.ipynb
+<span class="bad">       0</span></code></pre>
+      </div>
+      <div class="term">
+        <h3>nbripout</h3>
+        <pre><code><span class="sigil">$ </span>nbripout analysis.ipynb
+<span class="sigil">$ </span>wc -c &lt; analysis.ipynb
+<span class="good">     314</span></code></pre>
+      </div>
+    </div>
+    <ul class="facts">
+      <li>The stripped notebook goes to a temporary file that replaces the original only once it is complete, so a crash, Ctrl-C or a full disk leaves the old version in place.</li>
+      <li>Symlinks stay symlinks and file permissions are kept.</li>
+      <li>Notebooks that need no stripping are not touched, so their timestamps stay put.</li>
+      <li>A broken notebook is reported with a line and column, the remaining files are still stripped, and the exit code is 1.</li>
+    </ul>
+  </section>
+
+  <section class="block wrap" id="faster">
+    <div class="prose">
+      <h2>Fast enough to forget about</h2>
+      <p>Most of nbstripout's time goes into starting Python, once for every notebook git hands it. nbripout starts in milliseconds and, by default, lets git keep one nbripout process running for all notebooks in a command.</p>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span style="--sw: var(--bar-old)">nbstripout 0.9.1</span>
+      <span style="--sw: var(--bar-new)">nbripout</span>
+    </div>
+    <figure class="bench" id="bench" aria-label="Benchmark: wall time of nbstripout and nbripout in four scenarios">
+      <div class="bench-row">
+        <div class="bench-label">One notebook, stdin to stdout<small>what git runs per file</small></div>
+        <div class="bars">
+          <div class="bar old" tabindex="0" style="--w: 100" data-tool="nbstripout 0.9.1" data-value="144 ms"><i></i>144 ms</div>
+          <div class="bar new" tabindex="0" style="--w: 8.8" data-tool="nbripout" data-value="12.7 ms"><i></i>12.7 ms</div>
+        </div>
+        <div class="speed">11×</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-label">208 notebooks in place<small>pre-commit, CI, scripts</small></div>
+        <div class="bars">
+          <div class="bar old" tabindex="0" style="--w: 100" data-tool="nbstripout 0.9.1" data-value="1.00 s"><i></i>1.00 s</div>
+          <div class="bar new" tabindex="0" style="--w: 6.0" data-tool="nbripout" data-value="60 ms"><i></i>60 ms</div>
+        </div>
+        <div class="speed">17×</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-label">git add, one process per notebook<small>nbstripout's setup</small></div>
+        <div class="bars">
+          <div class="bar old" tabindex="0" style="--w: 100" data-tool="nbstripout 0.9.1" data-value="31.9 s"><i></i>31.9 s</div>
+          <div class="bar new" tabindex="0" style="--w: 12.2" data-tool="nbripout" data-value="3.9 s"><i></i>3.9 s</div>
+        </div>
+        <div class="speed">8×</div>
+      </div>
+      <div class="bench-row">
+        <div class="bench-label">git add, one process for all notebooks<small>nbripout's default setup</small></div>
+        <div class="bars">
+          <div class="bar old" tabindex="0" style="--w: 100" data-tool="nbstripout 0.9.1" data-value="31.9 s"><i></i>31.9 s</div>
+          <div class="bar new" tabindex="0" style="--w: 1.13" data-tool="nbripout" data-value="0.36 s"><i></i>0.36 s</div>
+        </div>
+        <div class="speed">89×</div>
+      </div>
+    </figure>
+    <p class="chart-note">Median wall time on an Apple M1 Max, with 208 notebooks (70 MB) from three public books. Bars are scaled per row to nbstripout's time. nbstripout has no shared-process mode, so the last row compares against its only setup.</p>
+    <details>
+      <summary>Show as a table</summary>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Scenario</th><th class="num">nbstripout 0.9.1</th><th class="num">nbripout</th><th class="num">Speedup</th></tr></thead>
+          <tbody>
+            <tr><td>One notebook, stdin to stdout</td><td class="num">144 ms</td><td class="num">12.7 ms</td><td class="num">11×</td></tr>
+            <tr><td>208 notebooks in place</td><td class="num">1.00 s</td><td class="num">60 ms</td><td class="num">17×</td></tr>
+            <tr><td>git add, one process per notebook</td><td class="num">31.9 s</td><td class="num">3.9 s</td><td class="num">8×</td></tr>
+            <tr><td>git add, one process for all notebooks</td><td class="num">31.9 s</td><td class="num">0.36 s</td><td class="num">89×</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <section class="block wrap" id="differences">
+    <div class="prose">
+      <h2>Where it deliberately differs</h2>
+      <p>Byte-for-byte compatibility stops where nbstripout crashes, loses data or behaves randomly.</p>
+    </div>
+    <div class="table-scroll">
+      <table class="diffs">
+        <thead><tr><th>Situation</th><th>nbstripout 0.9.1</th><th>nbripout</th></tr></thead>
+        <tbody>
+          <tr><td><code>--drop-tagged-cells "a b"</code></td><td data-label="nbstripout 0.9.1">Drops only cells tagged <code>b</code></td><td data-label="nbripout">Drops cells with any listed tag</td></tr>
+          <tr><td><code>--drop-empty-cells</code> on v2 and v3 notebooks</td><td data-label="nbstripout 0.9.1">Drops every code cell</td><td data-label="nbripout">Drops only code cells without code</td></tr>
+          <tr><td>An error after writing has started</td><td data-label="nbstripout 0.9.1">Leaves an empty file</td><td data-label="nbripout">Leaves the file unchanged</td></tr>
+          <tr><td><code>--keep-id</code> with missing or duplicate ids</td><td data-label="nbstripout 0.9.1">New random ids on every run</td><td data-label="nbripout">The same ids on every run</td></tr>
+          <tr><td>Zeppelin notebooks through the git filter</td><td data-label="nbstripout 0.9.1">Crashes</td><td data-label="nbripout">Detects and strips them</td></tr>
+          <tr><td>One broken notebook among many</td><td data-label="nbstripout 0.9.1">Stops there</td><td data-label="nbripout">Strips the rest, then exits with 1</td></tr>
+          <tr><td><code>--install</code> in a linked worktree</td><td data-label="nbstripout 0.9.1">Writes an attributes file git ignores</td><td data-label="nbripout">Writes the one git reads</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block wrap" id="usage">
+    <h2>Everyday commands</h2>
+    <dl class="cmds">
+      <dt><code>nbripout --install</code></dt><dd>Strip notebooks automatically whenever you stage them in this repository.</dd>
+      <dt><code>nbripout --status</code></dt><dd>Show how the git filter is configured.</dd>
+      <dt><code>nbripout analysis.ipynb</code></dt><dd>Strip a notebook in place.</dd>
+      <dt><code>nbripout --verify *.ipynb</code></dt><dd>Exit with 1 if anything would be stripped. Useful in CI.</dd>
+      <dt><code>nbripout --keep-output report.ipynb</code></dt><dd>Keep outputs but still remove execution counts and metadata. Single cells keep theirs with a <code>keep_output</code> tag.</dd>
+      <dt><code>nbripout --extra-keys "metadata.foo"</code></dt><dd>Remove more metadata. <code>git config filter.nbstripout.extrakeys</code> makes it permanent.</dd>
+      <dt><code>cat in.ipynb | nbripout &gt; out.ipynb</code></dt><dd>Strip from standard input to standard output.</dd>
+    </dl>
+    <p class="chart-note">Every nbstripout option works the same way; <code>nbripout --help</code> lists them. For pre-commit, use the hook <code>id: nbripout</code> from <code>https://github.com/thomascamminady/nbripout</code>.</p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>MIT licensed. Source, issues and the full list of differences are on <a href="https://github.com/thomascamminady/nbripout">GitHub</a>.</p>
+    <p>nbripout follows the behavior and documentation of <a href="https://github.com/kynan/nbstripout">nbstripout</a> by Min RK, Florian Rathgeber, Michael McNeil Forbes and Casper da Costa-Luis.</p>
+  </div>
+</footer>
+
+<div class="tip" id="tip" role="tooltip"><strong></strong><span></span></div>
+
+<script>
+(() => {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Copy the install commands.
+  for (const button of document.querySelectorAll(".copy")) {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy);
+        button.textContent = "Copied";
+      } catch {
+        button.textContent = "Press Ctrl+C";
+      }
+      setTimeout(() => { button.textContent = "Copy"; }, 2000);
+    });
+  }
+
+  // A torn edge shared by the input and output parts of the cell: before the rip
+  // they interlock seamlessly, afterwards both show the tear.
+  const cell = document.getElementById("cell");
+  const wrap = cell.querySelector(".out-wrap");
+  const count = document.getElementById("count");
+  const status = document.getElementById("cell-status");
+  const toggle = document.getElementById("toggle");
+  const teeth = 28;
+  const tear = [];
+  let seed = 7;
+  for (let i = 0; i <= teeth; i++) {
+    seed = (seed * 16807) % 2147483647;
+    tear.push([(i / teeth) * 100, 1 + (seed % 700) / 100]);
+  }
+  const outPoly = tear.map(([x, y]) => `${x}% ${y}px`).join(", ");
+  const inPoly = [...tear].reverse().map(([x, y]) => `${x}% calc(100% - var(--tear-h) + ${y}px)`).join(", ");
+  cell.style.setProperty("--tear-out", `polygon(${outPoly}, 100% 100%, 0% 100%)`);
+  cell.style.setProperty("--tear-in", `polygon(0% 0%, 100% 0%, ${inPoly})`);
+
+  let stripped = false;
+  let timers = [];
+  const later = (ms, fn) => timers.push(setTimeout(fn, reduceMotion ? 0 : ms));
+
+  // Animate the output area's height between its natural size and zero.
+  function setHeight(target) {
+    wrap.style.height = `${wrap.getBoundingClientRect().height}px`;
+    wrap.classList.add("closing");
+    void wrap.offsetHeight;
+    wrap.style.height = target === "auto" ? `${wrap.scrollHeight}px` : target;
+    if (target === "auto") {
+      later(470, () => { wrap.style.height = ""; wrap.classList.remove("closing"); });
+    }
+  }
+
+  function strip() {
+    timers.forEach(clearTimeout); timers = [];
+    stripped = true;
+    toggle.textContent = "Restore outputs";
+    cell.classList.remove("restoring");
+    cell.classList.add("ripping");
+    later(650, () => { cell.classList.add("collapsed"); setHeight("0px"); });
+    later(1100, () => {
+      cell.classList.add("clean");
+      count.textContent = " ";
+      status.textContent = "What git stores: no outputs, no execution count.";
+    });
+  }
+
+  function restore() {
+    timers.forEach(clearTimeout); timers = [];
+    stripped = false;
+    toggle.textContent = "Strip outputs";
+    count.textContent = "12";
+    status.textContent = "What you see in Jupyter.";
+    cell.classList.add("restoring");
+    cell.classList.remove("clean", "collapsed");
+    setHeight("auto");
+    later(30, () => cell.classList.remove("ripping"));
+  }
+
+  toggle.addEventListener("click", () => (stripped ? restore() : strip()));
+  if (!reduceMotion) setTimeout(() => { if (!stripped) strip(); }, 1600);
+
+  // Benchmark tooltips: the bars carry direct labels; hover and focus add the
+  // series name next to the value.
+  const tip = document.getElementById("tip");
+  const [tipValue, tipTool] = [tip.querySelector("strong"), tip.querySelector("span")];
+  const show = (bar, x, y) => {
+    tipValue.textContent = bar.dataset.value;
+    tipTool.textContent = bar.dataset.tool;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+    tip.classList.add("show");
+  };
+  const hide = () => tip.classList.remove("show");
+  for (const bar of document.querySelectorAll(".bar")) {
+    bar.setAttribute("aria-label", `${bar.dataset.tool}: ${bar.dataset.value}`);
+    bar.addEventListener("pointermove", (e) => show(bar, e.clientX, e.clientY));
+    bar.addEventListener("pointerleave", hide);
+    bar.addEventListener("focus", () => {
+      const r = bar.querySelector("i").getBoundingClientRect();
+      show(bar, r.right, r.top);
+    });
+    bar.addEventListener("blur", hide);
+  }
+})();
+</script>
+</body>
+</html>
