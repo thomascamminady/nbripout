@@ -11,7 +11,7 @@ written in Rust.
 - **Safer.** Notebooks are replaced atomically and are never left truncated.
 - **Faster.** 10–90× faster, mostly by not starting a Python interpreter per notebook.
 
-Website: https://thomascamminady.github.io/nbripout/
+Website: https://camminady.dev/nbripout/
 
 ## Install
 
