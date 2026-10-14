@@ -647,6 +647,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::excessive_precision)] // the exact binary values are the point
     fn float_repr_matches_python() {
         let cases = [
             (1e-5, "1e-05"),
